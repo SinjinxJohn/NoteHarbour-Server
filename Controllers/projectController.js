@@ -2,6 +2,7 @@ const notesModel = require("../Models/notesModel");
 const pagemodel = require("../Models/pageModel");
 const pageModel = require("../Models/pageModel");
 const projectModel = require("../Models/projectModel");
+const userModel = require("../Models/userModel");
 const { myCache } = require("../cacheStorage");
 
 module.exports.getProjects = async function (req, res) {
@@ -40,7 +41,7 @@ module.exports.addProject = async function (req, res) {
   try {
     const { name } = req.body;
     const userId = req.user._id;
-    const project = projectModel.create({ name: name, user: userId });
+    const project = projectModel.create({ name: name, creator: userId });
     res.status(200).json({
       messageType: "success",
       message: project,
@@ -54,10 +55,15 @@ module.exports.addProject = async function (req, res) {
 module.exports.addPage = async function (req, res) {
   try {
     const projectId = req.params.projectId;
-
+    const userId = req.user._id;
     // Create a new page
     const { name, description } = req.body;
-    const newPage = await pageModel.create({ name, description });
+    const newPage = await pageModel.create({
+      name,
+      description,
+      project: projectId,
+      members: [{ user: userId, role: "page_admin" }],
+    });
     const pageId = newPage._id;
 
     // Find the project by its ID
@@ -84,6 +90,81 @@ module.exports.addPage = async function (req, res) {
     });
   } catch (err) {
     console.error("Error adding project:", err);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
+module.exports.addPageMembers = async function (req, res) {
+  try {
+    const projectId = req.params.projectId;
+    const pageId = req.params.pageId;
+
+    // Find the project by ID
+    const project = await projectModel.findById(projectId);
+    if (!project) {
+      return res.status(404).json({
+        messageType: "Error",
+        message: "Project not found",
+      });
+    }
+
+    // Find the page within the project by ID
+    const page = await pageModel.findById(pageId);
+    if (!page) {
+      return res.status(404).json({
+        messageType: "Error",
+        message: "Page not found in the project",
+      });
+    }
+
+    // Ensure page.members is initialized
+    if (!page.members) {
+      console.log("no member");
+    }
+
+    const { members } = req.body;
+
+    // Check if members array is provided and is not empty
+    if (Array.isArray(members) && members.length > 0) {
+      for (const member of members) {
+        // Find user by ID
+        const user = await userModel.findById(member.user);
+        if (!user) {
+          return res
+            .status(404)
+            .json({ error: `User with ID ${member.user} not found` });
+        }
+
+        // Check if user is already a member of the page
+        if (
+          !page.members.some(
+            (pageMember) => pageMember.user.toString() === member.user
+          )
+        ) {
+          // Add user to the members array
+          page.members.push({
+            user: member.user,
+            role: member.role || "page_member",
+          });
+        }
+      }
+
+      // Save the updated page
+      await page.save();
+
+      res.status(200).json({
+        messageType: "success",
+        message: "Members added to page successfully",
+        page,
+      });
+    } else {
+      return res.status(400).json({
+        messageType: "error",
+        message: "No members provided or the members array is empty",
+      });
+    }
+  } catch (error) {
+    console.error("Error adding members:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 };
